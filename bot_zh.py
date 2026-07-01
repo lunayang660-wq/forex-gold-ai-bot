@@ -219,7 +219,8 @@ def send_signal_to_channel():
 
     result = tg_api("sendMessage", payload)
     if result and result.get("ok"):
-        log.info("  [信号] 推送成功")
+        signal_msg_id = result["result"]["message_id"]
+        log.info("  [信号] 推送成功 (msg_id=%s)", signal_msg_id)
         # 注册止盈监控（仅 XAUUSD 且目标价有效时）
         if signal_dict["symbol"] == "XAUUSD" and signal_dict["target_price"] is not None:
             entry_price = fetch_current_xauusd_price()
@@ -230,6 +231,7 @@ def send_signal_to_channel():
                     "direction":    signal_dict["direction"],
                     "target_price": signal_dict["target_price"],
                     "support_price": signal_dict["support_price"],
+                    "signal_msg_id": signal_msg_id,
                     "notified":     False,
                 })
                 log.info(f"  [TP] 开始监控：入场价 {entry_price:.2f}，目标价 {signal_dict['target_price']:.2f}")
@@ -296,8 +298,7 @@ def start_tp_monitor():
                         f"🕐 上车时间: {entry_time_str}\n"
                         f"💰 上车单价: {entry_price:.2f}\n"
                         f"💰 下车单价: {current_price:.2f}\n"
-                        f"📈 止盈: <b>{points} 点</b>\n\n"
-                        "⚠️ 以上数据由AI综合生成，仅供参考，非投资建议。"
+                        f"📈 止盈: <b>{points} 点</b>"
                     )
 
                     payload = {
@@ -305,9 +306,19 @@ def start_tp_monitor():
                         "text": notify_msg,
                         "parse_mode": "HTML",
                     }
+                    # 引用原始信号消息（引用05分推送的那条）
+                    if sig.get("signal_msg_id"):
+                        payload["reply_to_message_id"] = sig["signal_msg_id"]
                     result = tg_api("sendMessage", payload)
                     if result and result.get("ok"):
                         log.info(f"  [TP] 止盈提醒已发送！点数: {points}")
+                        # 发送贴纸 💰
+                        sticker_payload = {
+                            "chat_id": CHINESE_CID,
+                            "sticker": "CAACAgUAAyEFAATooiDIAANmakTNYWL42MUfQAEuXqxqIpOlOhQAAmoSAAL2IslWYpFBlKEWcp88BA",
+                            "reply_to_message_id": result["result"]["message_id"],
+                        }
+                        tg_api("sendSticker", sticker_payload)
                         sig["notified"] = True
                     else:
                         log.warning(f"  [TP] 止盈提醒发送失败: {result}")
