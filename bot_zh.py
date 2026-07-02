@@ -138,6 +138,69 @@ SYMBOL_NAMES_ZH = {
     "ETHUSDT": "以太坊",
 }
 
+def _fix_stoploss_price(ai_text, direction, support_p):
+    """
+    修正 AI 建议中的止损价格。
+    问题：API 返回的 suggestion 中，入场参考价和止损价经常是同一个数字
+    （如：背靠$4030支撑做多...跌破$4030离场），这不合理。
+    修正规则：做多时 止损 = 支撑价 - 9点；做空时 止损 = 阻力价 + 9点
+    """
+    import re
+
+    # 提取支撑位数值
+    support_val = None
+    if support_p and isinstance(support_p, str):
+        m = re.search(r'[\d.]+', support_p.replace(',', ''))
+        if m:
+            try:
+                support_val = float(m.group())
+            except:
+                pass
+
+    if not support_val or not ai_text:
+        return ai_text
+
+    # 做多：找 跌破$数字 → 止损下移到 支撑-9
+    if direction == "UP":
+        match = re.search(r'跌破\$?(\d[\d,]*\.?\d*)', ai_text)
+        if match:
+            sl_raw = match.group(1).replace(',', '')
+            try:
+                sl_val = float(sl_raw)
+                if abs(sl_val - support_val) < 5:
+                    new_sl = round(support_val - 9, 2)
+                    new_sl_str = f"${new_sl:.2f}"
+                    ai_text = re.sub(
+                        r'(跌破)\$?' + re.escape(match.group(1)),
+                        r'\1' + new_sl_str,
+                        ai_text, count=1
+                    )
+                    log.info(f"  [修正] 做多止损 {sl_raw} -> {new_sl_str}")
+            except ValueError:
+                pass
+
+    # 做空：找 突破$数字 → 止损上移到 阻力+9（近似用支撑+18）
+    elif direction == "DOWN":
+        match = re.search(r'突破\$?(\d[\d,]*\.?\d*)', ai_text)
+        if match:
+            sl_raw = match.group(1).replace(',', '')
+            try:
+                sl_val = float(sl_raw)
+                if abs(sl_val - support_val) < 5:
+                    new_sl = round(support_val + 9, 2)
+                    new_sl_str = f"${new_sl:.2f}"
+                    ai_text = re.sub(
+                        r'(突破)\$?' + re.escape(match.group(1)),
+                        r'\1' + new_sl_str,
+                        ai_text, count=1
+                    )
+                    log.info(f"  [修正] 做空止损 {sl_raw} -> {new_sl_str}")
+            except ValueError:
+                pass
+
+    return ai_text
+
+
 def build_signal_message(symbol="XAUUSD"):
     data = fetch_octopus(symbol)
     if not data:
@@ -157,6 +220,9 @@ def build_signal_message(symbol="XAUUSD"):
         sym_name    = str(name_raw).strip() or SYMBOL_NAMES_ZH.get(symbol, symbol)
         suggestion_raw = data.get("suggestion", "")
         ai_text      = str(suggestion_raw).strip()
+
+        # ── 修正 AI 建议中的止损价格（入场≈止损时自动调整）───
+        ai_text = _fix_stoploss_price(ai_text, direction, support_p)
 
         if direction == "UP":
             emoji, arrow, dir_text = "🔵", "⬆️", "做多"
